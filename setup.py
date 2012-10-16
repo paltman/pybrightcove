@@ -17,6 +17,6 @@ setup(
     include_package_data = True,
     zip_safe=False,
     license="MIT",
-    install_requires=["simplejson",]
+    install_requires=["requests==0.14.1"]
 )
 

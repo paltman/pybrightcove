@@ -23,19 +23,16 @@ and from the actual APIs.
 """
 
 import os
+import json
 import hashlib
-import simplejson
-import urllib2
-import urllib
 import tempfile
 import ftplib
 
 from xml.dom import minidom
 
-#import pybrightcove
+import requests
 
 from pybrightcove import config
-from pybrightcove import http_core
 from pybrightcove import enums
 from pybrightcove import exceptions
 
@@ -143,8 +140,10 @@ class FTPConnection(Connection):
         minidom.parseString(manifest)
 
         ## Record manifest
-        fpno, fname = tempfile.mkstemp(suffix=".xml", 
-            prefix="pybrightcove-manifest")
+        fpno, fname = tempfile.mkstemp(
+            suffix=".xml",
+            prefix="pybrightcove-manifest"
+        )
         fp_out = os.fdopen(fpno, 'wb')
         fp_out.write(manifest)
         fp_out.close()
@@ -175,38 +174,34 @@ class APIConnection(Connection):
         if not hasattr(self, "read_token"):
             raise exceptions.ImproperlyConfiguredError(
                 "Must specify at least a read_token.")
-        self._api_url = None
-        self._api_raw_data = None
-
+    
     def _post(self, data, file_to_upload=None):
         """
         Make the POST request.
         """
         # pylint: disable=E1101
-        params = {"JSONRPC": simplejson.dumps(data)}
-        req = None
+        params = {"JSONRPC": json.dumps(data)}
         if file_to_upload:
-            req = http_core.HttpRequest(self.write_url)
-            req.method = 'POST'
-            req.add_body_part("JSONRPC", simplejson.dumps(data), 'text/plain')
-            upload = file(file_to_upload, "rb")
-            req.add_body_part("filePath", upload, 'application/octet-stream')
-            req.end_of_parts()
-            content_type = "multipart/form-data; boundary=%s" % \
-                http_core.MIME_BOUNDARY
-            req.headers['Content-Type'] = content_type
-            req.headers['User-Agent'] = config.USER_AGENT
-
-            req = http_core.ProxiedHttpClient().request(req)
+            r = requests.post(
+                self.write_url,
+                data={"JSONRPC": json.dumps(data)},
+                files={"filePath": file(file_to_upload, "rb")},
+                headers={
+                    "User-Agent": config.USER_AGENT
+                }
+            )
         else:
-            msg = urllib.urlencode({'json': params['JSONRPC']})
-            req = urllib2.urlopen(self.write_url, msg)
+            r = requests.post(
+                self.write_url,
+                data={"json": params["JSONRPC"]}
+            )
 
-        if req:
-            result = simplejson.loads(req.read())
+        if r:
+            result = r.json
             if 'error' in result and result['error']:
                 exceptions.BrightcoveError.raise_exception(
-                    result['error'])
+                    result['error']
+                )
             return result['result']
 
     def _get_response(self, **kwargs):
@@ -214,24 +209,28 @@ class APIConnection(Connection):
         Make the GET request.
         """
         # pylint: disable=E1101
-        url = self.read_url + "?output=JSON&token=%s" % self.read_token
+        params = {
+            "output": "JSON",
+            "token": self.read_token,
+        }
         for key in kwargs:
             if key and kwargs[key]:
                 val = kwargs[key]
                 if isinstance(val, (list, tuple)):
                     val = ",".join(val)
-                url += "&%s=%s" % (key, val)
-        self._api_url = url
-        req = urllib2.urlopen(url)
-        data = simplejson.loads(req.read())
-        self._api_raw_data = data
-        if data and data.get('error', None):
+                params.update({
+                    key: val
+                })
+        r = requests.get(self.read_url, params=params)
+        if r.json and r.json.get("error"):
             exceptions.BrightcoveError.raise_exception(
-                data['error'])
-        if data == None:
+                r.json.get("error")
+            )
+        if not r.json:
             raise exceptions.NoDataFoundError(
-                "No data found for %s" % repr(kwargs))
-        return data
+                "No data found for %s" % repr(kwargs)
+            )
+        return r.json
 
     def post(self, command, file_to_upload=None, **kwargs):
         # pylint: disable=W0221,E1101
@@ -243,14 +242,13 @@ class APIConnection(Connection):
         if file_to_upload:
             md5 = hashlib.md5()
             file_handle = file(file_to_upload, 'rb')
-            bits = file_handle.read(262144)  ## 256KB
+            bits = file_handle.read(262144)  # 256KB
             while bits:
                 md5.update(bits)
                 bits = file_handle.read(262144)
             file_handle.close()
             params['file_checksum'] = md5.hexdigest()
         data['params'] = params
-
         return self._post(data=data, file_to_upload=file_to_upload)
 
     def get_list(self, command, item_class, page_size, page_number, sort_by,

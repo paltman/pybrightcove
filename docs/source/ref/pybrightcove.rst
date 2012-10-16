@@ -39,12 +39,6 @@ pybrightcove.exceptions
    :members:
    :undoc-members:
 
-pybrightcove.http_core
-----------------------
-
-.. automodule:: pybrightcove.http_core
-   :members:
-   :undoc-members:
 
 pybrightcove.playlist
 ---------------------
